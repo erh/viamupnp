@@ -64,6 +64,7 @@ func FindHost(ctx context.Context, logger logging.Logger, queries []DeviceQuery,
 					for _, endpoint := range query.Endpoints {
 						hostnames = append(hostnames, fmt.Sprintf("%s/%s", u.Hostname(), endpoint))
 					}
+					continue
 				}
 
 				hostnames = append(hostnames, u.Hostname())
@@ -147,6 +148,7 @@ func findAll(ctx context.Context, logger logging.Logger, networks []string, root
 			all = append(all, UPNPDevice{srv, desc})
 		}
 	}
+	fmt.Println("yo all: ", len(all))
 
 	return all, nil
 }
