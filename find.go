@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,10 +18,11 @@ import (
 
 // DeviceQuery specifics a query for a network device.
 type DeviceQuery struct {
-	ModelName    string `json:"model_name"`
-	Manufacturer string `json:"manufacturer"`
-	SerialNumber string `json:"serial_number"`
-	Network      string `json:"network"`
+	ModelName    string   `json:"model_name"`
+	Manufacturer string   `json:"manufacturer"`
+	SerialNumber string   `json:"serial_number"`
+	Network      string   `json:"network"`
+	Endpoints    []string `json:"endpoints"`
 }
 
 // UPNPDevice is a UPNPDevice device.
@@ -29,26 +31,50 @@ type UPNPDevice struct {
 	Desc    *deviceDesc
 }
 
-// FindHost looks for a host matching the query, returns just the host/ip (no port).
-func FindHost(ctx context.Context, logger logging.Logger, query DeviceQuery) (string, error) {
-	all, err := findAll(ctx, logger, query.Network)
-	if err != nil {
-		return "", err
-	}
-
-	for _, a := range all {
-		if a.Matches(query) {
-			u, err := url.Parse(a.Service.Location)
-			if err != nil {
-				// should be impossible
-				logger.Warnf("invalid location %s", a.Service.Location)
-				continue
-			}
-			return u.Hostname(), nil
+func parseNetworks(queries []DeviceQuery) []string {
+	networks := []string{}
+	for _, query := range queries {
+		if query.Network != "" && slices.Contains(networks, query.Network) {
+			networks = append(networks, query.Network)
 		}
 	}
+	return networks
+}
 
-	return "", fmt.Errorf("no match found for query: %v", query)
+// FindHost looks for a host matching the query, returns just the host/ip (no port).
+func FindHost(ctx context.Context, logger logging.Logger, queries []DeviceQuery, rootOnly bool) ([]string, error) {
+
+	networks := parseNetworks(queries)
+	all, err := findAll(ctx, logger, networks, rootOnly)
+	if err != nil {
+		return []string{}, err
+	}
+
+	hostnames := []string{}
+	for _, a := range all {
+		for _, query := range queries {
+			if a.Matches(query) {
+				u, err := url.Parse(a.Service.Location)
+				if err != nil {
+					// should be impossible
+					logger.Warnf("invalid location %s", a.Service.Location)
+					continue
+				}
+				if len(query.Endpoints) > 0 {
+					for _, endpoint := range query.Endpoints {
+						hostnames = append(hostnames, fmt.Sprintf("%s/%s", u.Hostname(), endpoint))
+					}
+				}
+
+				hostnames = append(hostnames, u.Hostname())
+			}
+		}
+	}
+	if len(hostnames) > 0 {
+		return hostnames, nil
+	}
+
+	return []string{}, fmt.Errorf("no match found for queries: %v", queries)
 }
 
 func matches(query string, s string) bool {
@@ -87,31 +113,39 @@ type FindAllTestKeyStruct string
 // FindAllTestKey - for testing.
 const FindAllTestKey = FindAllTestKeyStruct("findAllTestKey1231231231231")
 
-func findAll(ctx context.Context, logger logging.Logger, network string) ([]UPNPDevice, error) {
+func findAll(ctx context.Context, logger logging.Logger, networks []string, rootOnly bool) ([]UPNPDevice, error) {
 	all, ok := ctx.Value(FindAllTestKey).([]UPNPDevice)
 	if ok {
 		return all, nil
 	}
 
-	list, err := ssdp.Search(ssdp.All, 3, network) //nolint:mnd
-	if err != nil {
-		return nil, err
+	// All returns all services, which can be useful for debugging or looking for specific endpoints.
+	searchType := ssdp.All
+	if rootOnly {
+		// RootDevice only returns the root, which significantly reduces the amount of services to test.
+		searchType = ssdp.RootDevice
 	}
 
 	all = []UPNPDevice{}
-
-	for _, srv := range list {
-		logger.Debugf("found service (%s) at %s", srv.Type, srv.Location)
-
-		desc, err := readDeviceDesc(ctx, srv.Location)
+	for _, network := range networks {
+		list, err := ssdp.Search(searchType, 1, network) //nolint:mnd
 		if err != nil {
-			logger.Warnf("cannot read description %v", err)
-			continue
+			return nil, err
 		}
 
-		logger.Debugf("got description %v", desc)
+		for _, srv := range list {
+			logger.Debugf("found service (%s) at %s", srv.Type, srv.Location)
 
-		all = append(all, UPNPDevice{srv, desc})
+			desc, err := readDeviceDesc(ctx, srv.Location)
+			if err != nil {
+				logger.Warnf("cannot read description %v", err)
+				continue
+			}
+
+			logger.Debugf("got description %v", desc)
+
+			all = append(all, UPNPDevice{srv, desc})
+		}
 	}
 
 	return all, nil

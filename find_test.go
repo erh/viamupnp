@@ -94,7 +94,7 @@ func TestFindHost(t *testing.T) {
 		},
 	)
 
-	host, err := FindHost(ctx, logger, DeviceQuery{})
+	host, err := FindHost(ctx, logger, []DeviceQuery{}, false)
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, host, test.ShouldEqual, "eliot")
 }
