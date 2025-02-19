@@ -41,16 +41,18 @@ func parseNetworks(queries []DeviceQuery) []string {
 	return networks
 }
 
-// FindHost looks for a host matching the query, returns just the host/ip (no port).
-func FindHost(ctx context.Context, logger logging.Logger, queries []DeviceQuery, rootOnly bool) ([]string, error) {
+// FindHost looks for a host matching the query, returns the host/ip (no port).
+// Additionally returns a map of hosts to queries.
+func FindHost(ctx context.Context, logger logging.Logger, queries []DeviceQuery, rootOnly bool) ([]string, map[string]DeviceQuery, error) {
 
 	networks := parseNetworks(queries)
 	all, err := findAll(ctx, logger, networks, rootOnly)
 	if err != nil {
-		return []string{}, err
+		return []string{}, nil, err
 	}
 
 	hostnames := []string{}
+	foundQueries := map[string]DeviceQuery{}
 	for _, a := range all {
 		for _, query := range queries {
 			if a.Matches(query) {
@@ -60,22 +62,21 @@ func FindHost(ctx context.Context, logger logging.Logger, queries []DeviceQuery,
 					logger.Warnf("invalid location %s", a.Service.Location)
 					continue
 				}
-				if len(query.Endpoints) > 0 {
-					for _, endpoint := range query.Endpoints {
-						hostnames = append(hostnames, fmt.Sprintf("%s/%s", u.Hostname(), endpoint))
-					}
-					continue
+
+				// don't repeat hostnames we already found.
+				if !slices.Contains(hostnames, u.Hostname()) {
+					hostnames = append(hostnames, u.Hostname())
+					foundQueries[u.Hostname()] = query
 				}
 
-				hostnames = append(hostnames, u.Hostname())
 			}
 		}
 	}
 	if len(hostnames) > 0 {
-		return hostnames, nil
+		return hostnames, foundQueries, nil
 	}
 
-	return []string{}, fmt.Errorf("no match found for queries: %v", queries)
+	return []string{}, nil, fmt.Errorf("no match found for queries: %v", queries)
 }
 
 func matches(query string, s string) bool {
@@ -148,7 +149,6 @@ func findAll(ctx context.Context, logger logging.Logger, networks []string, root
 			all = append(all, UPNPDevice{srv, desc})
 		}
 	}
-	fmt.Println("yo all: ", len(all))
 
 	return all, nil
 }
