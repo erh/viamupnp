@@ -41,7 +41,8 @@ func parseNetworks(queries []DeviceQuery) []string {
 }
 
 // FindHost looks for a host matching the query, returns the host/ip (no port) and a map of hosts to queries.
-// Not every query will find a matching host, so using the map allows users to know which devices were found.
+// Not every query will find a matching host, and the host will map to the first matching query.
+// Using the map allows users to know which devices were found.
 func FindHost(ctx context.Context, logger logging.Logger, queries []DeviceQuery, rootOnly bool) ([]string, map[string]DeviceQuery, error) {
 
 	networks := parseNetworks(queries)
