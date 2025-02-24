@@ -18,11 +18,10 @@ import (
 
 // DeviceQuery specifics a query for a network device.
 type DeviceQuery struct {
-	ModelName    string   `json:"model_name"`
-	Manufacturer string   `json:"manufacturer"`
-	SerialNumber string   `json:"serial_number"`
-	Network      string   `json:"network"`
-	Endpoints    []string `json:"endpoints"`
+	ModelName    string `json:"model_name"`
+	Manufacturer string `json:"manufacturer"`
+	SerialNumber string `json:"serial_number"`
+	Network      string `json:"network"`
 }
 
 // UPNPDevice is a UPNPDevice device.
@@ -34,41 +33,44 @@ type UPNPDevice struct {
 func parseNetworks(queries []DeviceQuery) []string {
 	networks := []string{}
 	for _, query := range queries {
-		if query.Network != "" && slices.Contains(networks, query.Network) {
+		if !slices.Contains(networks, query.Network) {
 			networks = append(networks, query.Network)
 		}
 	}
 	return networks
 }
 
-// FindHost looks for a host matching the query, returns the host/ip (no port).
-// Additionally returns a map of hosts to queries.
+// FindHost looks for a host matching the query, returns the host/ip (no port) and a map of hosts to queries.
+// Not every query will find a matching host, so using the map allows users to know which devices were found.
 func FindHost(ctx context.Context, logger logging.Logger, queries []DeviceQuery, rootOnly bool) ([]string, map[string]DeviceQuery, error) {
 
 	networks := parseNetworks(queries)
-	all, err := findAll(ctx, logger, networks, rootOnly)
-	if err != nil {
-		return []string{}, nil, err
-	}
-
 	hostnames := []string{}
 	foundQueries := map[string]DeviceQuery{}
-	for _, a := range all {
-		for _, query := range queries {
-			if a.Matches(query) {
-				u, err := url.Parse(a.Service.Location)
-				if err != nil {
-					// should be impossible
-					logger.Warnf("invalid location %s", a.Service.Location)
-					continue
-				}
+	for _, network := range networks {
 
-				// don't repeat hostnames we already found.
-				if !slices.Contains(hostnames, u.Hostname()) {
-					hostnames = append(hostnames, u.Hostname())
-					foundQueries[u.Hostname()] = query
-				}
+		all, err := findAll(ctx, logger, network, rootOnly)
+		if err != nil {
+			return []string{}, nil, err
+		}
 
+		for _, a := range all {
+			for _, query := range queries {
+				if a.Matches(query) {
+					u, err := url.Parse(a.Service.Location)
+					if err != nil {
+						// should be impossible
+						logger.Warnf("invalid location %s", a.Service.Location)
+						continue
+					}
+
+					// don't repeat hostnames we already found.
+					if !slices.Contains(hostnames, u.Hostname()) {
+						hostnames = append(hostnames, u.Hostname())
+						foundQueries[u.Hostname()] = query
+					}
+
+				}
 			}
 		}
 	}
@@ -115,7 +117,7 @@ type FindAllTestKeyStruct string
 // FindAllTestKey - for testing.
 const FindAllTestKey = FindAllTestKeyStruct("findAllTestKey1231231231231")
 
-func findAll(ctx context.Context, logger logging.Logger, networks []string, rootOnly bool) ([]UPNPDevice, error) {
+func findAll(ctx context.Context, logger logging.Logger, network string, rootOnly bool) ([]UPNPDevice, error) {
 	all, ok := ctx.Value(FindAllTestKey).([]UPNPDevice)
 	if ok {
 		return all, nil
@@ -129,25 +131,23 @@ func findAll(ctx context.Context, logger logging.Logger, networks []string, root
 	}
 
 	all = []UPNPDevice{}
-	for _, network := range networks {
-		list, err := ssdp.Search(searchType, 1, network) //nolint:mnd
+	list, err := ssdp.Search(searchType, 1, network) //nolint:mnd
+	if err != nil {
+		return nil, err
+	}
+
+	for _, srv := range list {
+		logger.Debugf("found service (%s) at %s", srv.Type, srv.Location)
+
+		desc, err := readDeviceDesc(ctx, srv.Location)
 		if err != nil {
-			return nil, err
+			logger.Warnf("cannot read description %v", err)
+			continue
 		}
 
-		for _, srv := range list {
-			logger.Debugf("found service (%s) at %s", srv.Type, srv.Location)
+		logger.Debugf("got description %v", desc)
 
-			desc, err := readDeviceDesc(ctx, srv.Location)
-			if err != nil {
-				logger.Warnf("cannot read description %v", err)
-				continue
-			}
-
-			logger.Debugf("got description %v", desc)
-
-			all = append(all, UPNPDevice{srv, desc})
-		}
+		all = append(all, UPNPDevice{srv, desc})
 	}
 
 	return all, nil
