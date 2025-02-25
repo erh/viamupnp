@@ -86,15 +86,24 @@ func TestQuery1(t *testing.T) {
 func TestFindHost(t *testing.T) {
 	ctx := context.Background()
 	logger := logging.NewTestLogger(t)
+	descGood := deviceDesc{}
+	descGood.Device.ModelName = "good"
+	descBad := deviceDesc{}
+	descBad.Device.ModelName = "bad"
 
 	ctx = context.WithValue(ctx,
 		FindAllTestKey,
 		[]UPNPDevice{
-			{ssdp.Service{Location: "http://eliot:12312/asd.xml"}, nil},
+			{ssdp.Service{Location: "http://eliot:12312/asd.xml"}, &descGood},
+			{ssdp.Service{Location: "http://eliot2:12312/asd.xml"}, &descBad},
+			{ssdp.Service{Location: "http://eliot3:12312/asd.xml"}, &descGood},
 		},
 	)
 
-	host, err := FindHost(ctx, logger, DeviceQuery{})
+	hosts, hostsMap, err := FindHost(ctx, logger, []DeviceQuery{{ModelName: "good"}}, false)
 	test.That(t, err, test.ShouldBeNil)
-	test.That(t, host, test.ShouldEqual, "eliot")
+	test.That(t, len(hosts), test.ShouldEqual, 2)
+	test.That(t, hosts[0], test.ShouldEqual, "eliot")
+	test.That(t, hosts[1], test.ShouldEqual, "eliot3")
+	test.That(t, len(hostsMap), test.ShouldEqual, 2)
 }
